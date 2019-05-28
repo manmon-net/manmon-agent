@@ -1,0 +1,14 @@
+[Unit]
+Description=Manmon monitoring agent
+After=syslog.target network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/mmagent
+
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
+

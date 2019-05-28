@@ -1,0 +1,6 @@
+#!/usr/bin/python3
+
+from manmon.auth import Auth
+import sys
+
+Auth().saveHostGroupKey(sys.argv[1])

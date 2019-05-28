@@ -1,0 +1,9 @@
+#!/bin/bash
+if ! id -u mmagent > /dev/null 2>&1; then
+  useradd -M mmagent
+fi
+
+mkdir -p /var/lib/manmon/
+chown mmagent:mmagent /var/lib/manmon
+chown mmagent:mmagent /var/lib/manmon/.m*
+chmod 700 /var/lib/manmon/.m*

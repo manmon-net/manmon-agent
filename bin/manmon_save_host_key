@@ -1,0 +1,5 @@
+#!/usr/bin/python3
+from manmon.auth import Auth
+import sys
+
+Auth().saveKey(sys.argv[1])

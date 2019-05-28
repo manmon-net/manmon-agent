@@ -1,0 +1,18 @@
+#!/bin/bash
+if systemctl -q is-active manmon-agent
+then
+  if [ "$1" == "upgrade" ]
+  then
+    touch /var/lib/manmon/agent-was-running
+  fi
+  systemctl -q stop manmon-agent
+fi
+if systemctl -q is-active manmon-agent-uploader
+then
+  if [ "$1" == "upgrade" ]
+  then
+    touch /var/lib/manmon/uploader-was-running
+  fi
+  systemctl -q stop manmon-agent-uploader
+fi
+

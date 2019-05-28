@@ -1,0 +1,14 @@
+#!/bin/bash
+
+systemctl -q daemon-reload
+if systemctl -q is-enabled manmon-agent || [ -f /var/lib/manmon/agent-was-running ]
+then
+  rm -f /var/lib/manmon/agent-was-running
+  systemctl start manmon-agent 
+fi
+if systemctl -q is-enabled manmon-agent-uploader || [ -f /var/lib/manmon/uploader-was-running ]
+then
+  rm -f /var/lib/manmon/uploader-was-running
+  systemctl start manmon-agent-uploader
+fi
+

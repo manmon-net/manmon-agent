@@ -1,0 +1,14 @@
+[Unit]
+Description=Manmon monitoring agent uploader
+After=syslog.target network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/mmagent-uploader
+
+User=mmagent
+Group=mmagent
+
+[Install]
+WantedBy=multi-user.target
+
