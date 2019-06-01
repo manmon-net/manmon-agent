@@ -6,7 +6,7 @@ import subprocess
 import os, signal
 import os.path
 from manmon.get_long import getLong
-from manmon.classes import NetInterface, DiskStats
+from manmon.classes import NetInterface, DiskStats, ContainerMonitoringInfo, ContainerInfo
 from manmon.database import ManmonAgentDatabase
 
 d='/proc'
@@ -15,6 +15,7 @@ loadTopLists = True
 
 getTimeInMilliseconds = lambda: int(round(time.time() * 1000))
 
+logging.basicConfig(filename='/var/lib/manmon/agent.log',level=logging.DEBUG,format='%(asctime)-15s %(levelname)s %(message)s')
 db=ManmonAgentDatabase()
 
 class ManmonAgent():
@@ -28,9 +29,15 @@ class ManmonAgent():
         self.seconds = 60
         self.clockTicks = 1
         self.topListLowestValue = 1
+        self.containerPids = {}
+        self.containerMonitoringInfo = []
+        self.cpucount = 0
+        self.containers = {}
 
     def load(self):
         if not self.firstLoadDone:
+            self.processContainerStats()
+            self.getContainerParentPids()
             self.loadCpuStats()
             self.loadProcInfo()
 
@@ -43,6 +50,8 @@ class ManmonAgent():
         self.loadUsernames()
 
         if loadTopLists:
+            self.processContainerStats()
+            self.getContainerParentPids()
             self.calcProcCpuUsage()
             self.calcProcIo()
             self.calcOpenFiles()
@@ -55,6 +64,106 @@ class ManmonAgent():
         self.calcMemoryInfo()
         # TODO remove?
         self.loadProcInfo()
+
+
+    def processContainerStats(self):
+        if os.path.isfile("/usr/bin/docker"):
+            p=subprocess.Popen('systemctl is-active docker', shell=True, stdout=subprocess.PIPE)
+            line = p.stdout.readline().decode('UTF-8').strip()
+            if line == "active":
+                self.__processContainerStats()
+
+    def __processContainerStats(self):
+        self.containerMonitoringInfo = []
+        self.containerPids = {}
+        p=subprocess.Popen('docker inspect --format="{{.Id}} {{.State.Pid}} {{.Name}}" $(docker ps -q --no-trunc)', shell=True, stdout=subprocess.PIPE)
+        while True:
+            line = p.stdout.readline()
+            if line != '' and line.decode('UTF-8').strip() != '':
+                line = line.decode('UTF-8').strip()
+                try:
+                    containerId=line.split(" ")[0].strip()
+                    containerPid = getLong(line.split(" ")[1].strip())
+                    self.containerPids[containerPid] = containerId
+                    containerName=re.sub("\/", "", line.split(" ")[2]).strip()
+                    containerMemoryPath="/sys/fs/cgroup/memory/docker/"+containerId+"/"
+                    if not os.path.isdir(containerMemoryPath):
+                        containerMemoryPath = "/sys/fs/cgroup/memory/system.slice/docker-" + containerId + ".scope/"
+                        if not os.path.isdir(containerMemoryPath):
+                            containerMemoryPath = None
+                            logging.error("Could not find container memory info")
+                    containerCpuPath = "/sys/fs/cgroup/cpu,cpuacct/docker/" + containerId + "/"
+                    if not os.path.isdir(containerCpuPath):
+                        containerCpuPath = "/sys/fs/cgroup/cpu,cpuacct/system.slice/docker-"+containerId+".scope/"
+                        if not os.path.isdir(containerCpuPath):
+                            containerCpuPath = None
+                            logging.error("Could not find container CPU info")
+                    if containerCpuPath != None and containerMemoryPath != None:
+                        f = open(containerCpuPath+"cpuacct.usage")
+                        containerCpuUsage=getLong(f.read().strip())
+                        f.close()
+                        f = open(containerCpuPath + "cpu.cfs_period_us")
+                        containerCpuPeriod = getLong(f.read().strip())
+                        f.close()
+                        f = open(containerCpuPath + "cpu.cfs_quota_us")
+                        containerCpuQuota = getLong(f.read().strip())
+                        f.close()
+                        systemCpuUsage=self.getCpuUsage()
+                        f = open(containerMemoryPath+"memory.usage_in_bytes")
+                        containerMemUsageBytes = getLong(f.read().strip())
+                        f.close()
+                        f = open(containerMemoryPath+"memory.limit_in_bytes")
+                        containerMemLimitBytes = getLong(f.read().strip())
+                        f.close()
+                        memUsagePercent = getLong(float(containerMemUsageBytes)/float(containerMemLimitBytes)*100.00*100.00)
+                        memFreeBytes = containerMemLimitBytes-containerMemUsageBytes
+                        if containerId in self.containers:
+                            lastInfo = self.containers[containerId]
+                            systemDelta = systemCpuUsage - lastInfo.lastSystemCpuUsage
+                            cpuDelta = containerCpuUsage - lastInfo.lastCpuUsage
+                            containerCpuLoad=getLong((float(float(cpuDelta) / float(systemDelta))*float(self.cpucount)) * float(float(containerCpuQuota)/float(containerCpuPeriod)) * 100.00 * 100.00)
+                            self.containers[containerId] = ContainerInfo(containerId, containerPid, containerName, containerCpuUsage, systemCpuUsage)
+                            self.containerMonitoringInfo.append(ContainerMonitoringInfo(containerPid, containerName, containerCpuLoad, memUsagePercent, memFreeBytes))
+                        else:
+                            self.containers[containerId] = ContainerInfo(containerId, containerPid, containerName, containerCpuUsage, systemCpuUsage)
+                except Exception as e:
+                    logging.exception("Error loading container ",e)
+            else:
+                break
+        self.saveContainerInfo()
+
+    def saveContainerInfo(self):
+        for container in self.containerMonitoringInfo:
+            db.insertDataToDbWithKeys('mmContainerCpuUsagePercent', container.name, container.pid, container.cpuUsage)
+            db.insertDataToDbWithKeys('mmContainerMemUsedPercent', container.name, container.pid, container.memUsagePercent)
+            db.insertDataToDbWithKeys('mmContainerMemFreeBytes', container.name, container.pid, container.memFreeBytes)
+
+
+    def getCpuUsage(self):
+        try:
+            cpuload=0
+            cpucount=0
+            statFile = open(d + '/stat')
+            for row in statFile:
+                if re.match('^cpu ', row):
+                    rowPieces = re.split('\s+', row)
+                    cpu = rowPieces[0]
+                    userNew = float(rowPieces[1])
+                    niceNew = float(rowPieces[2])
+                    systemNew = float(rowPieces[3])
+                    idleNew = float(rowPieces[4])
+                    iowaitNew = float(rowPieces[5])
+                    irqNew = float(rowPieces[6])
+                    softirqNew = float(rowPieces[7])
+                    cpuload = getLong((userNew+niceNew+systemNew+idleNew+iowaitNew+irqNew+softirqNew)/100*1000000*1000)
+                elif re.match('^cpu', row):
+                    cpucount += 1
+            statFile.close()
+            self.cpucount = cpucount
+            return cpuload
+        except IOError:
+            print("Error loading " + d + "/stat")
+
 
     def loadCpuStats(self):
         newCpuData = {}
@@ -248,15 +357,16 @@ class ManmonAgent():
         data = sorted(procCpuUsage.items(), key=lambda x: x[1], reverse=True)
         count = 0
         for procId, value in data:
-            if count < self.topListCount and value > self.topListLowestValue:
-                db.insertDataToDbWithKeys('mmProcTopCpuLoad', self.procIdToProcName[procId], procId, value)
-                count += 1
+            if getLong(procId) not in self.containerPids and self.getContainerParentPid(procId) is None:
+                if count < self.topListCount and value > self.topListLowestValue:
+                    db.insertDataToDbWithKeys('mmProcTopCpuLoad', self.procIdToProcName[procId], procId, value)
+                    count += 1
 
     def calcProcIo(self):
 #        procChar = {}
         procBytes  = {}
         for pid in self.pids:
-            if os.path.isdir(d+'/'+pid):
+            if os.path.isdir(d+'/'+pid) and self.getContainerParentPid(pid) is None and getLong(pid) not in self.containerPids:
                 try:
                     ioFile = open(d+'/'+pid+'/io')
                     for row in ioFile:
@@ -400,8 +510,9 @@ class ManmonAgent():
                 procSoftLimitUsedByUid[uid] = (runningProcessesByUid[uid] * 100 * 100) / softLimit
                 procHardLimitUsedByUid[uid] = (runningProcessesByUid[uid] * 100 * 100) / hardLimit
             else:
-                procSoftLimitUsedByUid[uid] = (runningProcessesByUid[uid] * 100 * 100) / softLimitOpenProcsByUid[uid]
-                procHardLimitUsedByUid[uid] = (runningProcessesByUid[uid] * 100 * 100) / hardLimitOpenProcsByUid[uid]
+                if uid in softLimitOpenProcsByUid and uid in hardLimitOpenProcsByUid:
+                    procSoftLimitUsedByUid[uid] = (runningProcessesByUid[uid] * 100 * 100) / softLimitOpenProcsByUid[uid]
+                    procHardLimitUsedByUid[uid] = (runningProcessesByUid[uid] * 100 * 100) / hardLimitOpenProcsByUid[uid]
 
         self.saveSoftOpenFilesInfo(softLimitUsedByPid)
         self.saveHardOpenFilesInfo(hardLimitUsedByPid)
@@ -562,6 +673,33 @@ class ManmonAgent():
                     count += 1
 
 
+    def getContainerParentPid(self, pid):
+        pid=getLong(pid)
+        if pid in self.pidParents:
+            if self.pidParents[pid] in self.containerPids:
+                return getLong(self.pidParents[pid])
+            return self.getContainerParentPid(self.pidParents[pid])
+        else:
+            return None
+
+
+    def getContainerParentPids(self):
+        self.containerChildPids = {}
+        self.pidParents={}
+        for pid in [o for o in os.listdir(d) if os.path.isdir(os.path.join(d, o)) and re.match('^\d+$', o)]:
+            if getLong(pid) not in self.containerPids:
+                try:
+                    statusFile = open(d + "/" + pid + "/status", "r")
+                    for row in statusFile:
+                        if re.match("^PPid:", row):
+                            ppid=getLong(re.split("\s+", row)[1])
+                            pid=getLong(pid)
+                            self.pidParents[pid] = ppid
+                    statusFile.close()
+                except IOError:
+                    logging.debug("File not found " + d + '/status')
+
+
     def calcUserStats(self):
         usersMemoryUsage = {}
         usersIoUsage = {}
@@ -572,44 +710,65 @@ class ManmonAgent():
 
         for pid in [o for o in os.listdir(d) if os.path.isdir(os.path.join(d, o)) and re.match('^\d+$', o)]:
             if pid in self.procCpuUsage:
-                try:
-                    statusFile = open(d + "/" + pid + "/status", "r")
-                    uid = getLong(-1)
-                    for row in statusFile:
-                        if re.match("^Uid:", row):
-                            uid = getLong(re.split("\s+", row)[1])
-                            if uid in processesByUid:
-                                processesByUid[uid] = processesByUid[uid] + 1
-                            else:
-                                processesByUid[uid] = 1
-                            if uid in usersCpuUsage:
-                                usersCpuUsage[uid] = usersCpuUsage[uid] + self.procCpuUsage[pid]
-                            else:
-                                usersCpuUsage[uid] = self.procCpuUsage[pid]
-                            if uid in usersIoUsage:
-                                usersIoUsage[uid] = usersIoUsage[uid] + self.procIoUsage[pid]
-                            else:
-                                usersIoUsage[uid] = self.procIoUsage[pid]
-                        elif re.match("^Name:", row):
-                            pidsToProcNames[pid] = re.split("\s+", row)[1]
-                        elif re.match("^VmRSS:", row):
-                            procMem = getLong(re.split("\s+", row)[1])
-                            procsMemUsage[pid] = procMem
-                            if uid in usersMemoryUsage:
-                                usersMemoryUsage[uid] = usersMemoryUsage[uid] + getLong(procMem)
-                            else:
-                                usersMemoryUsage[uid] = getLong(procMem)
-                        elif re.match("^Threads:", row):
-                            threadCount = getLong(re.split("\s+", row)[1])
-                            # TODO check
-                            if uid in processesByUid:
-                                processesByUid[uid] = processesByUid[uid] + threadCount
-                            else:
-                                processesByUid[uid] = threadCount
+                containerPid = -1
+                if getLong(pid) in self.containerPids:
+                    containerPid = getLong(pid)
+                else:
+                    containerPid = self.getContainerParentPid(pid)
 
-                    statusFile.close()
-                except IOError:
-                    logging.debug("File not found " + d + '/status')
+                if containerPid is not None:
+                    try:
+                        statusFile = open(d + "/" + pid + "/status", "r")
+                        for row in statusFile:
+                            if re.match("^Threads:", row):
+                                threadCount = getLong(re.split("\s+", row)[1])
+                                if containerPid in self.containerChildPids:
+                                    self.containerChildPids[containerPid] += threadCount
+                                else:
+                                    self.containerChildPids[containerPid] = threadCount
+                        statusFile.close()
+                    except IOError:
+                        logging.debug("File not found " + d + '/status')
+
+                if containerPid is None:
+                    try:
+                        uid = getLong(-1)
+                        statusFile = open(d + "/" + pid + "/status", "r")
+                        for row in statusFile:
+                            if re.match("^Uid:", row):
+                                uid = getLong(re.split("\s+", row)[1])
+                                if uid in processesByUid:
+                                    processesByUid[uid] = processesByUid[uid] + 1
+                                else:
+                                    processesByUid[uid] = 1
+                                if uid in usersCpuUsage:
+                                    usersCpuUsage[uid] = usersCpuUsage[uid] + self.procCpuUsage[pid]
+                                else:
+                                    usersCpuUsage[uid] = self.procCpuUsage[pid]
+                                if uid in usersIoUsage:
+                                    usersIoUsage[uid] = usersIoUsage[uid] + self.procIoUsage[pid]
+                                else:
+                                    usersIoUsage[uid] = self.procIoUsage[pid]
+                            elif re.match("^Name:", row):
+                                pidsToProcNames[pid] = re.split("\s+", row)[1]
+                            elif re.match("^VmRSS:", row):
+                                procMem = getLong(re.split("\s+", row)[1])
+                                if pid not in self.containerPids:
+                                    procsMemUsage[pid] = procMem
+                                if uid in usersMemoryUsage:
+                                    usersMemoryUsage[uid] = usersMemoryUsage[uid] + getLong(procMem)
+                                else:
+                                    usersMemoryUsage[uid] = getLong(procMem)
+                            elif re.match("^Threads:", row):
+                                threadCount = getLong(re.split("\s+", row)[1])
+                                # TODO check
+                                if uid in processesByUid:
+                                    processesByUid[uid] = processesByUid[uid] + threadCount
+                                else:
+                                    processesByUid[uid] = threadCount
+                        statusFile.close()
+                    except IOError:
+                        logging.debug("File not found " + d + '/status')
         else:
             # TODO
             a = 1
@@ -619,6 +778,17 @@ class ManmonAgent():
         self.__saveUsersProcesses(processesByUid)
         self.__saveUsersCpuUsage(usersCpuUsage)
         self.__saveUsersIoUsage(usersIoUsage)
+        self.__saveContainerPidCounts()
+
+
+    def __saveContainerPidCounts(self):
+        for pid in self.containerPids:
+            containerId = self.containerPids[pid]
+            container = self.containers[containerId]
+            pidsUsed=1
+            if pid in self.containerChildPids:
+                pidsUsed += getLong(self.containerChildPids[pid])
+            db.insertDataToDbWithKeys('mmContainerPidsUsedCount', container.name, container.pid, pidsUsed)
 
     def __saveUsersMemoryUsage(self, usersMemoryUsage):
         data = sorted(usersMemoryUsage.items(), key=lambda x: x[1], reverse=True)
@@ -729,7 +899,6 @@ manmonAgent=ManmonAgent()
 manmonAgent.load()
 time.sleep(10)
 
-logging.basicConfig(filename='/var/lib/manmon/agent.log',level=logging.DEBUG,format='%(asctime)-15s %(levelname)s %(message)s')
 logging.info("Initialized agent")
 
 p = None

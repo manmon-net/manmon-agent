@@ -38,3 +38,19 @@ class NetInterface():
 
     def __lt__(self, other):
         return self.receivedBytes < other.receivedBytes
+
+class ContainerInfo():
+    def __init__(self, id, pid, name, lastCpuUsage, lastSystemCpuUsage):
+        self.id = id
+        self.pid = pid
+        self.name = name
+        self.lastCpuUsage = lastCpuUsage
+        self.lastSystemCpuUsage = lastSystemCpuUsage
+
+class ContainerMonitoringInfo():
+    def __init__(self, pid, name, cpuUsage, memUsagePercent, memFreeBytes):
+        self.pid = pid
+        self.name = name
+        self.cpuUsage = cpuUsage
+        self.memUsagePercent = memUsagePercent
+        self.memFreeBytes = memFreeBytes

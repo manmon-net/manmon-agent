@@ -1,4 +1,4 @@
-VERSION=1.0.22
+VERSION=1.0.73
 DISTRIBUTION=ubuntu-disco
 
 if [ `python3 --version | awk '{print $2}' | grep -c "^3.7"` -eq 1 ]
@@ -13,8 +13,8 @@ then
   cp -p ../../manmon-plugins/*.py $PYTHON3_PACKAGE_LOCATION/manmon-plugins
   python3 -m compileall $PYTHON3_PACKAGE_LOCATION/manmon
   python3 -m compileall $PYTHON3_PACKAGE_LOCATION/manmon-plugins
-  rm -f $PYTHON3_PACKAGE_LOCATION/manmon/*.py
-  rm -f $PYTHON3_PACKAGE_LOCATION/manmon-plugins/*.py
+#  rm -f $PYTHON3_PACKAGE_LOCATION/manmon/*.py
+#  rm -f $PYTHON3_PACKAGE_LOCATION/manmon-plugins/*.py
   cd $PYTHON3_PACKAGE_LOCATION/manmon/__pycache__
   rename 's/\.cpython-37//' *.pyc
   mv *.pyc ../
@@ -35,6 +35,10 @@ then
   cp -p ../../bin/python3_start.sh manmon-agent-${DISTRIBUTION}-${VERSION}-1/usr/bin/mmagent
   chmod +x manmon-agent-${DISTRIBUTION}-${VERSION}-1/usr/bin/mmagent
   cp -p ../../bin/python3_start_uploader.sh manmon-agent-${DISTRIBUTION}-${VERSION}-1/usr/bin/mmagent-uploader
+  cp -p ../../bin/manmon_save_hostgroup_key manmon-agent-${DISTRIBUTION}-${VERSION}-1/usr/bin/
+  cp -p ../../bin/manmon_save_host_key manmon-agent-${DISTRIBUTION}-${VERSION}-1/usr/bin/ 
+  chmod +x manmon-agent-${DISTRIBUTION}-${VERSION}-1/usr/bin/manmon_save_hostgroup_key
+  chmod +x manmon-agent-${DISTRIBUTION}-${VERSION}-1/usr/bin/manmon_save_host_key
   chmod +x manmon-agent-${DISTRIBUTION}-${VERSION}-1/usr/bin/mmagent-uploader
   mkdir -p usr/lib/systemd/system/
   cp -p ../../systemd/manmon-agent.service usr/lib/systemd/system/manmon-agent.service

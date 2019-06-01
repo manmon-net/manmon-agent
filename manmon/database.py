@@ -12,8 +12,7 @@ from manmon.get_long import getLong
 
 fileDir = '/var/lib/manmon'
 copyDataLimit = 30
-uploadDataLimit = 10
-
+uploadDataLimit = 20
 
 class ManmonAgentDatabase():
     def __init__(self):
@@ -61,6 +60,7 @@ class ManmonAgentDatabase():
         value = getLong(round(value))
         dataId = self.getDataId(dataOidName)
         if dataId == None:
+            print ("ERROR OID with name " + dataOidName + " not found")
             logging.error("ERROR OID with name " + dataOidName + " not found")
         else:
             if dataId[1] == True:
@@ -309,4 +309,3 @@ def getStr(value):
         return "";
     else:
         return str(value)
-

@@ -3,7 +3,7 @@ Source: manmon-agent
 Version: 1.0-1
 Architecture: amd64 
 Maintainer: Tomi Malkki <tomi@malkki.eu>
-Depends: python3, manmon-conf, manmon-key, python3-requests, python3-crypto
+Depends: python3, manmon-conf, python3-requests, python3-crypto
 Section: python
 Priority: optional
 Homepage: https://manmon.net
