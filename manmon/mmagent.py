@@ -64,7 +64,7 @@ class ManmonAgent():
         self.calcMemoryInfo()
         # TODO remove?
         self.loadProcInfo()
-
+        self.getTomcatInfo()
 
     def processContainerStats(self):
         if os.path.isfile("/usr/bin/docker"):
@@ -890,6 +890,34 @@ class ManmonAgent():
         db.insertDataToDb('mmMemSwapFree', memData['swapFree'])
         db.insertDataToDb('mmMemSwapUsedPercent', memData['swapUsedPercent'])
         #db.insertDataToDb('mmMemAvailable', memData['memAvailable'])
+
+    def getTomcatInfo(self):
+        if os.path.isdir(("/home/manmon-data/java-agent")):
+            dt = str(datetime.datetime.utcnow().strftime("%Y-%m-%d_%H:%M:00"))
+            for root, dirs, files in os.walk("/home/manmon-data/java-agent", topdown=False):
+                for file in files:
+                    filepath = os.path.join(root, file)
+                    if file.endswith(dt):
+                        pid = re.sub(".*\\/", "", root)
+                        name = re.sub("\\/" + pid + "$", "", root)
+                        name = re.sub("^.*\\/", "", name)
+                        f = open(filepath, "r")
+                        for row in f:
+                            row = row.strip()
+                            dataid = row.split("#")[0]
+                            value = getLong(row.split("#")[1])
+                            if dataid == '20423':
+                                db.insertDataToDbWithKeys('mmJavaMemUsedPercent', name, getLong(pid), value)
+                            elif dataid == '20420':
+                                db.insertDataToDbWithKeys('mmJavaMemFreeBytes', name,getLong(pid), value)
+                        f.close()
+
+                    if os.path.isfile(filepath) and filepath.startswith("/home/manmon-data/java-agent"):
+                        os.remove(filepath)
+                for dir in dirs:
+                    dirpath=os.path.join(root, dir)
+                    if len(os.listdir(dirpath)) == 0 and os.path.isdir(dirpath) and dirpath.startswith("/home/manmon-data/java-agent/manmon"):
+                        os.removedirs(dirpath)
 
     def runDataProcessing(self):
         db.processData()

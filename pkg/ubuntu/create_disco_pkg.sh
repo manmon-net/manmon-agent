@@ -1,4 +1,4 @@
-VERSION=1.0.73
+VERSION=1.0.86
 DISTRIBUTION=ubuntu-disco
 
 if [ `python3 --version | awk '{print $2}' | grep -c "^3.7"` -eq 1 ]
