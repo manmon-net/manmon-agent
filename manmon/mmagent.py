@@ -914,10 +914,10 @@ class ManmonAgent():
 
                     if os.path.isfile(filepath) and filepath.startswith("/home/manmon-data/java-agent"):
                         os.remove(filepath)
-                for dir in dirs:
-                    dirpath=os.path.join(root, dir)
-                    if len(os.listdir(dirpath)) == 0 and os.path.isdir(dirpath) and dirpath.startswith("/home/manmon-data/java-agent/manmon"):
-                        os.removedirs(dirpath)
+#                for dir in dirs:
+#                   dirpath=os.path.join(root, dir)
+#                    if len(os.listdir(dirpath)) == 0 and os.path.isdir(dirpath) and dirpath.startswith("/home/manmon-data/java-agent/manmon"):
+#                        os.rmdir(dirpath)
 
     def runDataProcessing(self):
         db.processData()

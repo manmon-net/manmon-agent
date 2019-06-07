@@ -12,7 +12,6 @@ from manmon.get_long import getLong
 
 fileDir = '/var/lib/manmon'
 copyDataLimit = 30
-uploadDataLimit = 20
 
 class ManmonAgentDatabase():
     def __init__(self):
@@ -24,6 +23,17 @@ class ManmonAgentDatabase():
         self.setDts()
         self.lastSavedMinute = -1
         self.session = requests.session()
+
+    def getUploadDataLimit(self, dataId):
+        self.mibCur.execute("SELECT max_upload_list_size FROM mib_object WHERE id=?", (dataId,))
+        return self.mibCur.fetchone()[0]
+
+    def getOrder(self, dataId):
+        self.mibCur.execute("SELECT descending_sort FROM mib_object WHERE id=?", (dataId,))
+        if int(self.mibCur.fetchone()[0]) == 1:
+            return "DESC"
+        else:
+            return "ASC"
 
     def getMibId(self, mibName):
         self.mibCur.execute("SELECT id FROM mib WHERE name=?", (mibName,))
@@ -170,7 +180,7 @@ class ManmonAgentDatabase():
                 rowCounter = 0
                 # TODO other possibilities than average
                 for row in sourceCur.execute(
-                        "SELECT dataid,key1,key2,cast(round(sum(value)/?) as int) as avgvalue FROM " + sourceTableName + " WHERE dataid=? GROUP BY dataid,key1,key2 HAVING avgvalue>=? ORDER BY avgvalue DESC LIMIT ?",
+                        "SELECT dataid,key1,key2,cast(round(sum(value)/?) as int) as avgvalue FROM " + sourceTableName + " WHERE dataid=? GROUP BY dataid,key1,key2 HAVING avgvalue>=? ORDER BY avgvalue "+self.getOrder(dataId)+" LIMIT ?",
                         (dataCount, dataId, self.getMinUploadValue(dataId), copyDataLimit)):
                     if firstRow:
                         x="###DT#" + curDt + "\n"
@@ -178,7 +188,7 @@ class ManmonAgentDatabase():
                         firstRow = False
                     destCur.execute("INSERT INTO " + destTableName + "(dataid, key1, key2, dt, value) VALUES (?,?,?,?,?)",
                                     (row[0], row[1], row[2], curDt, row[3],))
-                    if rowCounter < uploadDataLimit:
+                    if rowCounter < self.getUploadDataLimit(dataId):
                         x=getStr(row[0]) + "#" + getStr(row[1]) + "#" + getStr(row[2]) + "#" + getStr(row[3]) + "\n"
                         gzobj.write(x.encode())
                         rowCounter = rowCounter + 1
@@ -197,7 +207,7 @@ class ManmonAgentDatabase():
                     destCur.execute(
                         "INSERT INTO " + destTableName + "_str(dataid, key1, key2, dt, value) VALUES (?,?,?,?,?)",
                         (row[0], row[1], row[2], curDt, row[3],))
-                    if rowCounter < uploadDataLimit:
+                    if rowCounter < self.getUploadDataLimit(dataId):
                         x=getStr(row[0]) + "#" + getStr(row[1]) + "#" + getStr(row[2]) + "#" + getStr(row[3]) + "\n"
                         gzobj.write(x.encode())
                         rowCounter = rowCounter + 1
@@ -239,8 +249,8 @@ class ManmonAgentDatabase():
         for dataId in dataIds:
             if dataId in mibDataIds:
                 for row in self.destCur.execute(
-                        "SELECT dt,dataid,key1,key2,value FROM data_min WHERE dt=? AND dataid=? AND value >=? ORDER BY dt, value DESC LIMIT ?",
-                        (self.curDt, dataId, self.getMinUploadValue(dataId), uploadDataLimit,)):
+                        "SELECT dt,dataid,key1,key2,value FROM data_min WHERE dt=? AND dataid=? AND value >=? ORDER BY dt, value "+self.getOrder(dataId)+" LIMIT ?",
+                        (self.curDt, dataId, self.getMinUploadValue(dataId), self.getUploadDataLimit(dataId),)):
                     if firstRow:
                         x="###DT#" + self.curDt + "\n"
                         gzobj.write(x.encode())

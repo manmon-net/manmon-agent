@@ -136,3 +136,4 @@ class MonitoringUploader(threading.Thread):
                 logging.error("Exception:" + str(e))
         except Exception as ex:
             logging.error("Exception:" + str(ex))
+            sleep(10)
